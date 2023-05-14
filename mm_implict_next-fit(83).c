@@ -40,6 +40,8 @@ team_t team = {
 };
 
 /*과제 1) explicit /
+/*https://dapsu-startup.tistory.com/entry/Malloc-Lab-%EB%8F%99%EC%A0%81-%EB%A9%94%EB%AA%A8%EB%A6%AC-%ED%95%A0%EB%8B%B93-Implicit-first-fit-next-fit-%EC%BD%94%EB%93%9C-%EA%B5%AC%ED%98%84
+이 블로그 참고했음.*/
 
 
 /* single word (4) or double word (8) alignment */
