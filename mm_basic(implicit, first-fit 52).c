@@ -50,8 +50,8 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
-#define WSIZE 4 /*64비트에서 돌릴 거라 4->8로 바꿈*/
-#define DSIZE 8 /*64비트에서 돌릴 거라 8->16로 바꿈*/
+#define WSIZE 4 
+#define DSIZE 8 
 #define CHUNKSIZE (1<<12)
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
