@@ -30,11 +30,11 @@ team_t team = {
     /* First member's email address */
     "mulverry@gmail.com",
     /* Second member's full name (leave blank if none) */
-    "김상윤",
+    " ",
     /* Second member's email address (leave blank if none) */
     "@gmail.com"
     /* Second member's full name (leave blank if none) */
-    "박정원",
+    " ",
     /* Second member's email address (leave blank if none) */
     "@gmail.com"
 };
@@ -108,7 +108,7 @@ int mm_init(void)
 	PUT(heap_listp + (3*WSIZE), PACK(0, 1)); //Epilogue header
 	heap_listp += (2*WSIZE); 
 
-	/* Extends the empty heap with a free block of CHUNKSIZE bytes 청크 사이즈만큼 힙을 확장해 초기 가용 블록 생성.*/ */
+	/* Extends the empty heap with a free block of CHUNKSIZE bytes 청크 사이즈만큼 힙을 확장해 초기 가용 블록 생성.*/
 	if (extend_heap(CHUNKSIZE/WSIZE) == NULL) // chunk size 확인(받을 수 있는 사이즈인지)
 		return -1; 
 
@@ -186,31 +186,36 @@ static void *coalesce(void *bp)
  */
 void *mm_malloc(size_t size) // size byte
 {
-	size_t asize; // 할당도니 블록사이즈
-	size_t extendsize; // 힙 확장 사이즈
+	size_t asize; // 할당된 블록사이즈
+	size_t extendsize; // 들어갈 자리가 없을 때 늘려야 하는 힙 확장 사이즈
 	char *bp; //블록포인터
 
 	/* Ignore spurious requests (size == 0) */
-	if (size == 0)
+	if (size == 0) // 만약 입력받은 사이즈가 0이면 무시
         return NULL;
 	
 	/* Adjust block size to include overhead and alignement reqs */
-	if (size <= DSIZE)
-        asize = 2*DSIZE; // if size is under 8bytes , 2Dsize로 할당요청
+	if (size <= DSIZE) // 만약 입력받은 사이즈가 DSIZE보다 작을지라도 최소 블록SIZE(2*DSIZE)로 생성
+        asize = 2*DSIZE; 
+	//8바이트 넘는 요청 : 오버헤드(블록 내에서 payload를 제외한 모든 것=헤더,푸터) 바이트 내에 더해주고, 가까운 8의 배수로 반올림
 	else //할당요청의 용량이 2words 초과하면, 충분한 8바이트의 배수의 용량 할당
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
 
-	/* 사이즈에 맞는 free list 탐색 */
-	if ((bp = find_fit(asize)) != NULL) { //first-fit으로 찾기
-		place(bp, asize);
+	/* 사이즈에 맞는 free list 탐색.  first-fit */
+	if ((bp = find_fit(asize)) != NULL) { // 맞는 블록 찾으면 - 할당기 : place로 요청 블록 배치, 옵션으로 초과부분 분할, 새 할당 블록 리턴(반환)
+		place(bp, asize); // put해서 bp를 헤더에 asize만큼 넣어준다(할당해준다) 
 		return bp;
 	}
 
 	/* 사이즈에 맞는 free list가 없는 경우, 추가적으로 힙 영역 요청 및 배치 */
-	extendsize = MAX(asize, CHUNKSIZE);
-	if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
+	// 맞는 free block이 없을 때
+    // 힙을 새로운 free block으로 확장하고,
+    // extend_heap으로 힙을 새로운 free block으로 확장(메모리 공간 더 할당), 
+    // 요청한 블록을 새로운 free block에 배치(place)
+	extendsize = MAX(asize, CHUNKSIZE); // 만약 chunk size보다 클 경우, 둘 중 더 큰 값으로 사이즈를 정한다.
+	if ((bp = extend_heap(extendsize/WSIZE)) == NULL)  // 단위 변환을 위해서 워드 사이즈로 바꿔주기 위해서 나눈다. 넘긴 사이즈만큼의 heap을 할당 받는다.
         return NULL;
-	place(bp, asize);
+	place(bp, asize); // 사이즈 늘린 상태에다가 bp주소에 asize를 배치
 	return bp;
 }
 
@@ -223,42 +228,50 @@ void *mm_realloc(void *ptr, size_t size)
     void *newptr;
     size_t copySize;
     
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
+    newptr = mm_malloc(size); //다른 곳에 다시 할당받기
+
+    if (newptr == NULL) // 실패하면 NULL 리턴
       return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
+    
+	copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE); // 원래 블록사이즈
+
+    if (size < copySize) //요청한 사이즈가 원래 블록사이즈보다 작다면 작은사이즈로 카피함.
       copySize = size;
     memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
+    mm_free(oldptr); //기존 사이즈는 삭제
     return newptr;
 }
-
 
 static void *find_fit(size_t asize)
 {
     void *bp;
 
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
-        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){//힙리스트 처음부터, 사이즈가 0이 넘는 블록 탐색. bp를 다음 블럭 포인터로 바꿔가며 블록단위로 for문 탐색. 
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){ //Header가 Free이거나 주어진 size보다 fit하면
             return bp;
         }
     }
     return NULL;
-    /*endif 안 넣었음*/
 }
 
-static void place(void *bp, size_t asize)
+/*
+ * place(bp, size) : size만큼 할당 후 남는 부분이 분할되었다면 free 블록 처리를 해준다.
+ */
+static void place(void *bp, size_t asize) // free블록에 배치시키는 함수
 {
     size_t csize = GET_SIZE(HDRP(bp));
 
-    if ((csize - asize) >= (2*DSIZE)){
+    if ((csize - asize) >= (2*DSIZE)){ // 삽입하고 자리가 남으면(나머지가 최소블록크기보다 크면) split 해준다.
+		//헤더와 풋터에 요청받은 용량만큼 현재 블록에 배치(1은 할당된 블록)
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
+
         bp = NEXT_BLKP(bp);
-        PUT(HDRP(bp), PACK(csize-asize, 0));
+		
+		//이제 bp는 다음 블록포인터임. 다음블럭에 나머지 사이즈와 free를 헤더와 풋터에 할당함.
+        PUT(HDRP(bp), PACK(csize-asize, 0)); 
         PUT(FTRP(bp), PACK(csize-asize, 0));
-    } else {
+    } else { // 나머지가 2*DSIZE(최소 가용 블록 크기)보다 적게 남으면 모두 할당
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
     }
