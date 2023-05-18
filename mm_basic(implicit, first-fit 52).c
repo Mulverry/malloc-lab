@@ -64,7 +64,7 @@ team_t team = {
 #define PUT(p, val) (*(unsigned int *)(p) = (val))  /*인자p가 가리키는 워드에 val 저장*/
 
 /* Read the size and allocated fields from address p */
-#define GET_SIZE(p) (GET(p) & ~0x7)  /*크기 리턴. 헤더 정보에 있는 사이즈의 크기만 가져옴.*/
+#define GET_SIZE(p) (GET(p) & ~0x7)   /*크기 리턴. 헤더 정보에 있는 사이즈의 크기만 가져옴. (0~7은 111로 3비트. 3비트를 제외한 나머지는 크기를 나타낸다.)*/
 #define GET_ALLOC(p) (GET(p) & 0x1)  /*할당비트 리턴*/
 
 /* 블록포인터 bp에 대하여, 헤더와 푸터 주소 계산. bp는 payload의 시작점의 포인터. */
@@ -73,7 +73,7 @@ team_t team = {
 
 /* Given block ptr bp, compute address of next and previous blocks */
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE))) //다음 블록의 bp 리턴. 현재 bp + 현재블록 크기(헤더에 나온 내 사이즈)
-#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) //이전 블록의 bp 리턴. 현재 bp - 이전블록 크기
+#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE))) //이전 블록의 bp 리턴. 현재 bp - 이전블록 크기(이전 블록 푸터에 나온 블록사이즈)
 
 /*함수 선언을 앞에 쓰면 함수 순서 관계없이 코드 작성 가능*/
 static void *coalesce(void *bp); 
@@ -91,44 +91,48 @@ static char *heap_listp; /*p824*/
 
 /* 
  * mm_init - initialize the malloc package.
+ // 초기 힙 생성
+    // 4 words 사이즈의 빈 가용 리스트 초기화
+    // 4 words 구성 : unused padding, prologue_header, prologue_footer, epilogue_header
  */
 int mm_init(void)
 {
 	/* Create the initial empty heap */
+	 // 처음에 mem_sbrk(4*WSIZE) 를 호출함으로써 heap_listp 의 시작 주소를 변경시켜 준다.
 	if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1) //heap_listp가 힙의 최댓값이상을 요청하면 fail
 		return -1;
 
 	PUT(heap_listp, 0); //Alignment padding
-	PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); //Prologue header. heap_listp + Wsize가 가리키는 워드에 pack(Dsize, 1) 값 저장
-	PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); //Prologue footer. heap_listp + 2*Wsize가 가리키는 워드에 pack(Dsize, 1) 값 저장
+	PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); //Prologue header. heap_listp + Wsize가 가리키는 워드에 pack(Dsize, 1-할당됨) 값 저장
+	PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); //Prologue footer. heap_listp + 2*Wsize가 가리키는 워드에 pack(Dsize, 1-할당됨) 값 저장
 	PUT(heap_listp + (3*WSIZE), PACK(0, 1)); //Epilogue header
 	heap_listp += (2*WSIZE); 
 
-	/* Extends the empty heap with a free block of CHUNKSIZE bytes */
-	if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
+	/* Extends the empty heap with a free block of CHUNKSIZE bytes 청크 사이즈만큼 힙을 확장해 초기 가용 블록 생성.*/ */
+	if (extend_heap(CHUNKSIZE/WSIZE) == NULL) // chunk size 확인(받을 수 있는 사이즈인지)
 		return -1; 
 
 	return 0;
 }
 
-static void *extend_heap(size_t words)
+static void *extend_heap(size_t words) // 워드 단위 메모리를 인자로 받아, 새 가용 블록으로 힙을 확장.
 {
 	char *bp;
 	size_t size;
 	
-	/* Allocate an even number of words to maintain alignment */
-	size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
-	if ((long)(bp = mem_sbrk(size)) == -1) return NULL; //bp는 이전 힙의 마지막 블록 +1 위치 리턴
+	/* Allocate an even number of words to maintain alignment 더블 워드 정렬에 따라 mem_sbrk함수로 추가 힙 메모리를 할당받는다.*/
+	size = (words % 2) ? (words+1) * WSIZE : words * WSIZE; //words가 홀수면 +1을 해서 공간할당, 짝수면 그냥 할당
+	if ((long)(bp = mem_sbrk(size)) == -1) // // brk 포인터에 size만큼 더해서 힙을 늘림. 너무 커서 할당 못받으면 return -1
+		return NULL; 
 	
 	/*Initialize free block header / footer and the epilogue header */
-	PUT(HDRP(bp), PACK(size, 0)); // Free block header
-	PUT(FTRP(bp), PACK(size, 0)); // Free block footer
-	PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // New epilogue header 
+	PUT(HDRP(bp), PACK(size, 0)); // Free block header. 초기에는 할당비트를 0(free)로 줌.
+	PUT(FTRP(bp), PACK(size, 0)); // Free block footer.
+	PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // New epilogue header. 다음 sbrk 호출 시 새로운 free block의 Header가 됨
 
-	/* Coalesce if the previous block was free */
+	/* Coalesce if the previous block was free 이전 block이 free였다면 coalesce(연결) */
 	return coalesce(bp);
 }
-
 
 /*
  * mm_free - Freeing a block does nothing.
@@ -137,9 +141,9 @@ void mm_free(void *bp)
 {
 	size_t size = GET_SIZE(HDRP(bp));
 	
-	PUT(HDRP(bp), PACK(size, 0));
-	PUT(FTRP(bp), PACK(size, 0));
-	coalesce(bp);
+	PUT(HDRP(bp), PACK(size, 0)); //헤더에 free라고 입력
+	PUT(FTRP(bp), PACK(size, 0)); //풋터에 free라고 입력
+	coalesce(bp); //연결
 }
 
 static void *coalesce(void *bp)
